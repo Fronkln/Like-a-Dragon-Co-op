@@ -1,0 +1,13 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="../../Y7Internal.NET/DELibrary.NET/DELibrary.NET.csproj" Id="9900112c-25d6-427d-846a-a90e31cf8fe3">
+    <BuildType Solution="Debug|*" Project="YLAD Debug" />
+    <BuildType Solution="Release|*" Project="YLAD Release" />
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Like a Dragon Co-op/Like a Dragon Co-op.csproj" Id="45aa11ee-4f9c-4eb6-83a4-87225cd34f69">
+    <Platform Project="x64" />
+  </Project>
+</Solution>
