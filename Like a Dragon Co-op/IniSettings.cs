@@ -30,7 +30,7 @@ namespace LADCoop
         {
             Ini settings = new Ini(Path.Combine(Mod.Instance.ModPath, "settings.ini"));
             
-            Mod.CoopPlayersCount = int.Parse(settings.GetValue("CoopPlayersCount", "", "1"));
+            Mod.CoopPlayersCount = int.Parse(settings.GetValue("CoopPlayerCount", "", "1"));
             Mod.ControlMode = int.Parse(settings.GetValue("ControlMode", "", "0"));
             Mod.Player1IsKBD = settings.GetValue("Player1IsKeyboard", "", "1") == "1";
             Mod.TeleportDistance = float.Parse(settings.GetValue("TeleportDistance", "", "20"), CultureInfo.InvariantCulture);
