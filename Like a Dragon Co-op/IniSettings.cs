@@ -34,11 +34,21 @@ namespace LADCoop
             Mod.ControlMode = int.Parse(settings.GetValue("ControlMode", "", "0"));
             Mod.Player1IsKBD = settings.GetValue("Player1IsKeyboard", "", "1") == "1";
             Mod.TeleportDistance = float.Parse(settings.GetValue("TeleportDistance", "", "20"), CultureInfo.InvariantCulture);
+            Mod.EnforceHumanFreeze = byte.Parse(settings.GetValue("EnforceHumanFreeze", "", "0")) > 0;
 
 
-            NonPresentPlayerCharacterPreference[0] = (Player.ID)Enum.Parse(typeof(Player.ID), settings.GetValue("NotPresentPlayer2Character", "", "adachi"));
-            NonPresentPlayerCharacterPreference[1] = (Player.ID)Enum.Parse(typeof(Player.ID), settings.GetValue("NotPresentPlayer3Character", "", "nanba"));
-            NonPresentPlayerCharacterPreference[2] = (Player.ID)Enum.Parse(typeof(Player.ID), settings.GetValue("NotPresentPlayer4Character", "", "saeko"));
+            try
+            {
+                NonPresentPlayerCharacterPreference[0] = (Player.ID)Enum.Parse(typeof(Player.ID), settings.GetValue("NotPresentPlayer2Character", "", "adachi"));
+                NonPresentPlayerCharacterPreference[1] = (Player.ID)Enum.Parse(typeof(Player.ID), settings.GetValue("NotPresentPlayer3Character", "", "nanba"));
+                NonPresentPlayerCharacterPreference[2] = (Player.ID)Enum.Parse(typeof(Player.ID), settings.GetValue("NotPresentPlayer4Character", "", "saeko"));
+            }
+            catch
+            {
+                NonPresentPlayerCharacterPreference[0] = Player.ID.adachi;
+                NonPresentPlayerCharacterPreference[1] = Player.ID.nanba;
+                NonPresentPlayerCharacterPreference[2] = Player.ID.saeko;
+            }
 
             DeviceIDsOverride[0] = int.Parse(settings.GetValue("Player1InputOverride", "", "-1"));
             DeviceIDsOverride[1] = int.Parse(settings.GetValue("Player2InputOverride", "", "-1"));

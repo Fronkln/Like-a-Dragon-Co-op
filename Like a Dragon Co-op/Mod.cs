@@ -1,9 +1,12 @@
 ﻿using DragonEngineLibrary;
+using DragonEngineLibrary.Service;
 using DragonEngineLibrary.Unsafe;
 using MinHook;
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,9 +14,6 @@ using System.Threading;
 
 namespace LADCoop
 {
-    //TODO: Redirect access of Steam BindingManager to your own fake class for more than 1 co-op player support 
-    //TODO ALTERNATIVE APPROACH: Spawn them as supporter, attach player components?
-    //TODO IMPORTANT!!!: Control mode
     internal unsafe class Mod : DragonEngineMod
     {
         public static Mod Instance;
@@ -22,12 +22,14 @@ namespace LADCoop
         public static int CoopPlayersCount = 3;
         public static float TeleportDistance = 15f;
         public static bool Player1IsKBD = false;
+        public static bool EnforceHumanFreeze = false;
 
         private static IntPtr* PadManager;
         private static HookEngine HookEngine = new HookEngine();
 
         public static EntityHandle<Character> HumanPlayer;
         public static bool IsBattle = false;
+        public static bool IsRealtime = false;
 
         private bool m_loading = false;
 
@@ -38,6 +40,7 @@ namespace LADCoop
             Instance = this;
 
             IniSettings.Read();
+            TimelineForceNPCPlayer.Read();
 
             NativeFunctions.Init();
 
@@ -48,7 +51,17 @@ namespace LADCoop
             m_origCharaReqStartFighter = HookEngine.CreateHook<Delegates.CharacterRequestStartFighter>(CPP.ReadCall(CPP.PatternSearch("E8 ? ? ? ? 48 8B 0D ? ? ? ? E8 ? ? ? ? B0")), request_start_fighter);
             m_origFighterIsAlly = HookEngine.CreateHook<Delegates.FighterIsAlly>(CPP.PatternSearch("40 53 48 83 EC ? 48 8B 01 48 8B D9 80 B8 ? ? ? ? ? 0F 85"), Fighter_IsAlly);
             m_origCharacterComponentsPreFinalize = HookEngine.CreateHook<Delegates.CharacterComponentsPreFinalize>(CPP.ReadCall(CPP.PatternSearch("E8 ? ? ? ? 48 8D 55 ? 48 8D 4F ? E8 ? ? ? ? 41 8B CF")), CCharacterComponents_PreFinalize);
-            m_handleAutoModeTrampoline = HookEngine.CreateHook<Delegates.TurnCommandDecideManagerHandleAutoMode>(CPP.PatternSearch("48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC ? 41 8B 40 ? 49 8B F8"), TurnCommandDecideManager_HandleAutoMode);
+            
+            
+            if(EnforceHumanFreeze)
+                m_origCharaHandleHumanFreeze = HookEngine.CreateHook<Delegates.CharacterHandleHumanFreeze>(CPP.PatternSearch("40 57 48 83 EC ? 48 C7 44 24 ? ? ? ? ? 48 89 5C 24 ? 48 89 6C 24 ? 48 89 74 24 ? 48 8B F2 48 8B E9 48 81 C1"), handle_human_freeze);
+
+            IsRealtime = Parless.GetModsList().Any(x => x.Contains("BrawlerKiwami", StringComparison.OrdinalIgnoreCase));
+            var autoModeHookAddr = CPP.PatternSearch("48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC ? 41 8B 40 ? 49 8B F8");
+
+            //Like a Brawler controls this itself
+            if (autoModeHookAddr != IntPtr.Zero && IsRealtime)
+                m_handleAutoModeTrampoline = HookEngine.CreateHook<Delegates.TurnCommandDecideManagerHandleAutoMode>(autoModeHookAddr, TurnCommandDecideManager_HandleAutoMode);
 
             HookEngine.EnableHooks();
 
@@ -62,7 +75,7 @@ namespace LADCoop
             if (CoopPlayersCount > 3)
                 CoopPlayersCount = 3;
 
-            DragonEngine.Log("Heroes of Yokohama initialized.");
+            DragonEngine.Log("Heroes of Yokohama initialized. Is realtime combat: " + IsRealtime);
         }
 
 #if DEBUG
@@ -95,7 +108,15 @@ namespace LADCoop
             HumanPlayer = DragonEngine.GetHumanPlayer();
             var humanPlayerCharacter = HumanPlayer.Get();
 
+
+            bool preBattleStart = IsBattle;
             IsBattle = HumanPlayer.IsValid() && FighterManager.GetFighter(0).IsValid();
+
+            if(preBattleStart != IsBattle)
+            {
+                if (IsBattle)
+                    OnBattleStart();
+            }
 
             if (!IsBattle)
                 UpdateSlots();
@@ -119,19 +140,41 @@ namespace LADCoop
 
                 float distToMainPlayer = Vector3.Distance(humanPlayerCharacter.Transform.Position, nakama.Transform.Position);
 
-                if (distToMainPlayer >= TeleportDistance)
-                    nakamaHandle.Get().RequestWarpPose(new PoseInfo(humanPlayerCharacter.Transform.Position, 0));
+                if(!IsBattle || IsRealtime)
+                    if (distToMainPlayer >= TeleportDistance)
+                        nakamaHandle.Get().RequestWarpPose(new PoseInfo(humanPlayerCharacter.Transform.Position, 0));
 
-                //Reset Camera in adventure
-                if (BattleTurnManager.CurrentPhase == BattleTurnManager.TurnPhase.NumPhases)
+
+                if (!IsBattle)
                 {
-                    if (nakama.Pad.IsJustPush(BattleButtonID.npc))
-                        nakama.RequestWarpPose(new PoseInfo(humanPlayerCharacter.Transform.Position, 0));
+                    //Reset Camera in adventure
+                    if (BattleTurnManager.CurrentPhase == BattleTurnManager.TurnPhase.NumPhases)
+                    {
+                        if (nakama.Pad.IsJustPush(BattleButtonID.npc))
+                            nakama.RequestWarpPose(new PoseInfo(humanPlayerCharacter.Transform.Position, 0));
+                    }
                 }
+            }
+        }
 
-                if (GameVarManager.GetValueBool(GameVarID.human_freeze))
-                    nakama.Status.SetNoInputTemporary();
+        private void OnBattleStart()
+        {
+            var mainPlayer = NakamaManager.GetCharacterHandle(0).Get();
 
+            for (int i = 1; i < 4; i++)
+            {
+                if (!IsNakamaIndexPlayer(i))
+                    continue;
+
+                var nakamaHandle = NakamaManager.GetCharacterHandle(i);
+
+                if (!nakamaHandle.IsValid())
+                    continue;
+
+                var nakama = nakamaHandle.Get();
+
+                if(Vector3.Distance(nakama.Transform.Position, mainPlayer.Transform.Position) >= 6)
+                        nakama.RequestWarpPose(new PoseInfo(mainPlayer.Transform.Position, 0));
             }
         }
 
@@ -150,9 +193,12 @@ namespace LADCoop
                 var nakama = nakamaHandle.Get();
 
 #warning This is better off in Like a Dragon Revised source code.
-                if(!IsMyTurn(nakama))
-                    CharacterInput.DetachInputCommand(nakama);
 
+                if (!IsRealtime)
+                {
+                    if (!IsMyTurn(nakama))
+                        CharacterInput.DetachInputCommand(nakama);
+                }
             }
         }
 
@@ -162,8 +208,8 @@ namespace LADCoop
             {
                 if (Party.GetMainMemberCount() - 1 < CoopPlayersCount)
                 {
+                    DragonEngine.Log("We are short party members. Force creating them on Scene ID: " + SceneService.CurrentScene.Get().SceneID);
                     CreateMissingPlayers();
-                    DragonEngine.Log("we are short");
                 }
             }
         }
@@ -277,6 +323,12 @@ namespace LADCoop
                 return;
             }
 
+            if (IsRealtime)
+            {
+                UpdateSlots();
+                return;
+            }
+
             if (BattleTurnManager.CurrentActionStep >= BattleTurnManager.ActionStep.Init)
             {
                 Fighter selectedAttacker = BattleTurnManager.SelectedFighter.Get().GetFighter();
@@ -293,29 +345,29 @@ namespace LADCoop
 
                         if (ControlMode == 0 || IsNakamaIndexPlayer(nakamaIdx))
                             CharacterInput.SetEveryoneToSlotAndDevice(nakamaIdx);
-                        else if(ControlMode == 1)
+                        else if (ControlMode == 1)
                         {
-                            if(nakamaIdx == 2)
+                            if (nakamaIdx == 2)
                                 CharacterInput.SetEveryoneToSlotAndDevice(0);
-                            else if(nakamaIdx == 3)
+                            else if (nakamaIdx == 3)
                                 CharacterInput.SetEveryoneToSlotAndDevice(1);
                         }
                     }
-                        
+
                 }
                 else
                 {
-                    if(selectedAttacker.IsEnemy())
+                    if (selectedAttacker.IsEnemy())
                     {
                         var target = BattleTurnManager.TargetFighter;
                         var targetFighter = target.Get().GetFighter();
 
-                       
-                       if(targetFighter.IsPlayer() || targetFighter.IsAlly())
+
+                        if (targetFighter.IsPlayer() || targetFighter.IsAlly())
                         {
                             var targetPlayerID = targetFighter.Character.Attributes.player_id;
 
-                            if(targetPlayerID > 0)
+                            if (targetPlayerID > 0)
                             {
                                 int nakamaIdx = NakamaManager.FindIndex(targetFighter.Character.Attributes.player_id);
 
@@ -324,7 +376,7 @@ namespace LADCoop
                                 else
                                     CharacterInput.SetEveryoneToSlotAndDevice(0);
                             }
-                            
+
                         }
                     }
                 }
@@ -345,6 +397,11 @@ namespace LADCoop
             return false;
         }
 
+        private static bool ShouldSpawnEveryoneAsNonPlayer()
+        {
+            return TimelineForceNPCPlayer.CheckAny();
+        }
+
         private static void ResetSlots()
         {
             CharacterInput.SetEveryoneToSlot(0);
@@ -363,6 +420,7 @@ namespace LADCoop
             return BattleTurnManager.SelectedFighter.UID == chara.UID;
         }
 
+
         //Sad but necessary: Hooked to ccharacter constructor instead of create entity
         //Because it can crash for some people, weird hooking quirk.
         private static Delegates.CreateChara m_origChara;
@@ -377,12 +435,14 @@ namespace LADCoop
 
                 if (nakamaIndex > 0)
                 {
-                    if (IsNakamaIndexPlayer(nakamaIndex))
+                    if (IsNakamaIndexPlayer(nakamaIndex) && !ShouldSpawnEveryoneAsNonPlayer())
+                    {
                         Utils.SetPlayerModeCharacterAttributes(attributesPtr);
+                    }
                 }
             }
 
-           return m_origChara(cchara, uid_arg, parent, createParam, _file_port);
+            return m_origChara(cchara, uid_arg, parent, createParam, _file_port);
         }
 
 #warning THERE HAS TO BE A BETTER WAY TO DO THIS, JUST ENSURE IS PLAYER IS NOT SET BACK TO ZERO?
@@ -396,10 +456,14 @@ namespace LADCoop
 
             if (playerID > 0)
             {
-                int nakamaIndex = NakamaManager.FindIndex(playerID);
+                if (!ShouldSpawnEveryoneAsNonPlayer())
+                {
 
-                if (IsNakamaIndexPlayer(nakamaIndex))
-                    Utils.SetPlayerModeCharacterAttributes((byte*)(chara.Pointer + 0x1F0));
+                    int nakamaIndex = NakamaManager.FindIndex(playerID);
+
+                    if (IsNakamaIndexPlayer(nakamaIndex))
+                        Utils.SetPlayerModeCharacterAttributes((byte*)(chara.Pointer + 0x1F0));
+                }
             }
 
             m_origSetupAttachComponent(charaSetup);
@@ -421,7 +485,7 @@ namespace LADCoop
                     if (!nakamaChara.IsValid())
                         continue;
 
-                    if (IsNakamaIndexPlayer((int)i))
+                    if (IsNakamaIndexPlayer((int)i) && nakamaChara.Get().Attributes.is_player)
                     {
                         NativeFunctions.RegisterNakamaForBattle((int)i);
                         DragonEngine.Log("Registered co-op player nakama index " + i);
@@ -429,6 +493,31 @@ namespace LADCoop
                 }
             }
         }
+
+
+        private static Delegates.CharacterHandleHumanFreeze m_origCharaHandleHumanFreeze;
+        private static unsafe void handle_human_freeze(IntPtr characterPtr, IntPtr padInfo)
+        {
+            Character chara = new Character() { Pointer = characterPtr };
+
+            if (chara.UID == NakamaManager.GetCharacterHandle(0).UID)
+            {
+                m_origCharaHandleHumanFreeze(characterPtr, padInfo);
+
+                //Handle human freeze manually for co-op players due to how they have to be created.
+                for (uint i = 1; i < 4; i++)
+                {
+                    var nakamaChara = NakamaManager.GetCharacterHandle(i);
+
+                    if (!nakamaChara.IsValid())
+                        continue;
+
+                    var nakamaObj = nakamaChara.Get();
+                    m_origCharaHandleHumanFreeze(nakamaObj.Pointer, nakamaObj.Pointer + 0x1250);
+                }
+            }
+        }
+
 
 
         //Purpose: Ensure co-op players are still treated as "Ally" in battle to ensure no weirdness happens.
@@ -465,7 +554,7 @@ namespace LADCoop
             }
             IntPtr res = m_origCharacterComponentsPreFinalize(characterCompsPtr);
 
-            if(playerID > 0)
+            if (playerID > 0)
             {
                 //NECEESSARY for the proper cleanup of the co-op player!
                 //Without it, they don't get properly transitioned into scripted battles etc...
@@ -476,7 +565,7 @@ namespace LADCoop
 
             return res;
         }
-        
+
         //Purpose: Automode for npc party members if on control mode 0
         private static Delegates.TurnCommandDecideManagerHandleAutoMode m_handleAutoModeTrampoline = null;
         private static bool TurnCommandDecideManager_HandleAutoMode(IntPtr thisPtr, IntPtr selectCommandInfo, long** fighterPtrPtr)
@@ -486,9 +575,9 @@ namespace LADCoop
             int* autoModePtr = (int*)fighterPtrPtr + 2;
             int ogAutoMode = *autoModePtr;
 
-            if(ControlMode <= 0)
+            if (ControlMode <= 0)
             {
-                if(fighter.IsAlly())
+                if (fighter.IsAlly())
                 {
                     var playerID = fighter.Character.Attributes.player_id;
 
@@ -504,7 +593,7 @@ namespace LADCoop
                             *autoModePtr = 0;
                     }
                 }
-                else if(fighter.IsPlayer())
+                else if (fighter.IsPlayer())
                     *autoModePtr = 0;
             }
 

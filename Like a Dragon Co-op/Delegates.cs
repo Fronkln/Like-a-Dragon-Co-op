@@ -16,6 +16,9 @@ namespace LADCoop
         public delegate void CharacterRequestStartFighter(IntPtr characterPtr);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public delegate void CharacterHandleHumanFreeze(IntPtr characterPtr, IntPtr padInputInfo);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         [return: MarshalAs(UnmanagedType.U1)]
         public delegate bool FighterIsAlly(IntPtr fighterPtr);
 
