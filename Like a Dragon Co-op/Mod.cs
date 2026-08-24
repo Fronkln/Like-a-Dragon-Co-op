@@ -83,6 +83,9 @@ namespace LADCoop
         {
             while (true)
             {
+                if (DragonEngine.IsKeyHeld(VirtualKey.LeftControl))
+                    if (DragonEngine.IsKeyDown(VirtualKey.A))
+                        SaveHelper.ResetJobXP(Player.ID.adachi, RPGJobID.adachi_01);
             }
         }
 #endif
@@ -246,6 +249,8 @@ namespace LADCoop
 
             Player.ID mainPlayer = Party.GetMainMember(0);
 
+            IntPtr partyChunk = SaveData.GetItem(23);
+
             for (int i = 0; i < amountToMake; i++, startingPlayerIndex++)
             {
                 Player.ID preferredPlayer = IniSettings.NonPresentPlayerCharacterPreference[startingPlayerIndex - 1];
@@ -259,15 +264,15 @@ namespace LADCoop
                 //Player did not exist in savedata at all before. Initialize to Kasuga's stats.
                 if (Player.GetJobLevel(preferredPlayer) == 99 && Player.GetLevel(preferredPlayer) == 99)
                 {
-                    Player.SetLevel(Player.GetLevel(mainPlayer), preferredPlayer);
+                    SaveHelper.ResetXP(preferredPlayer);
 
-                    for (int k = 0; k < (int)RPGJobID.num; k++)
+                    for (int k = 1; k < (int)RPGJobID.num; k++)
                     {
                         var job = (RPGJobID)k;
-                        Player.SetJobLevel(job, 1, preferredPlayer);
+                        Player.SetJobLevel(job, 1, preferredPlayer, false, false);
+                        SaveHelper.ResetJobXP(preferredPlayer, job);
                     }
 
-                    Player.SetJobLevel(Player.GetCurrentJob(preferredPlayer), Player.GetJobLevel(mainPlayer), preferredPlayer);
                 }
 
             }

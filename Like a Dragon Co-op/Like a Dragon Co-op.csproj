@@ -27,4 +27,10 @@
     <ProjectReference Include="..\..\..\Y7Internal.NET\DELibrary.NET\DELibrary.NET.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="LibARMP">
+      <HintPath>LibARMP.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
 </Project>
